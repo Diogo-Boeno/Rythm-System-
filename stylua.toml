@@ -3,4 +3,8 @@ line_endings = "Unix"
 indent_type = "Tabs"
 indent_width = 4
 quote_style = "AutoPreferDouble"
-call_parentheses = "Always"
+# "Input" respects hand-written parens: the codebase deliberately mixes styles —
+# no parens for the Vide `create "Frame" { ... }` pattern (COMPONENTS.md convention),
+# but parens everywhere else (game:GetService("X"), require(...), table.freeze({...})).
+# "Always" breaks the create pattern; "None" would strip parens off GetService/require too.
+call_parentheses = "Input"

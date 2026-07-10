@@ -10,6 +10,7 @@ local Checkbox = require(script.Checkbox)
 local TextInput = require(script.TextInput)
 local ModelViewport = require(script.ModelViewport)
 local AutoScale = require(script.AutoScale)
+local HitCircle = require(script.HitCircle)
 
 export type Theme = Theme.Theme
 export type ButtonProps = Button.ButtonProps
@@ -18,6 +19,9 @@ export type WindowProps = Window.WindowProps
 export type CheckboxProps = Checkbox.CheckboxProps
 export type TextInputProps = TextInput.TextInputProps
 export type ModelViewportProps = ModelViewport.ModelViewportProps
+export type HitCircleProps = HitCircle.HitCircleProps
+export type HitResult = HitCircle.HitResult
+export type Judgement = HitCircle.Judgement
 
 return table.freeze({
 	Theme = Theme,
@@ -28,6 +32,7 @@ return table.freeze({
 	TextInput = TextInput,
 	ModelViewport = ModelViewport,
 	AutoScale = AutoScale,
+	HitCircle = HitCircle,
 
 	-- next pass: Slider, Dropdown, ProgressBar, Tooltip
 })
