@@ -21,10 +21,10 @@ local Theme = {
 		textFaint = Color3.fromRGB(92, 92, 100),
 
 		-- the single accent: interaction feedback only, never decoration.
-		-- accentDim is the hover tier so full accent stays reserved for
+		-- accentDim is the hover tier so full accent  stays reserved for
 		-- engaged states (pressed, focused, checked).
-		accent = Color3.fromRGB(226, 163, 74),
-		accentDim = Color3.fromRGB(146, 108, 55),
+		accent = Color3.fromRGB(236, 236, 236),
+		accentDim = Color3.fromRGB(111, 111, 111),
 	},
 
 	font = {

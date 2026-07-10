@@ -49,7 +49,7 @@ export type HitCircleProps = {
 }
 
 -- Ring starts this many times the circle diameter and shrinks to 1x at the beat.
-local START_SCALE = 2.8
+local START_SCALE = 2.4
 local DEFAULT_APPROACH = 1.2
 local DEFAULT_PERFECT_MS = 40
 local DEFAULT_GREAT_MS = 90
