@@ -36,6 +36,9 @@ export type HitCircleProps = {
 	goodMs: number?,
 	-- re-arm after the feedback flash instead of freezing (practice/demo loop)
 	autoReset: boolean?,
+	-- if true, a click outside the hit window is ignored (the note stays live)
+	-- instead of resolving as a miss — "only a click on the beat counts"
+	onlyOnBeat: boolean?,
 	-- optional key hint drawn inside the circle (e.g. "S", "F")
 	label: Reactive<string>?,
 	size: UDim2?,
@@ -205,7 +208,13 @@ local function HitCircle(props: HitCircleProps)
 					return
 				end
 				local errMs = (os.clock() - clockStart - approachTime) * 1000
-				resolve(judgeFromError(errMs), errMs)
+				local judgement = judgeFromError(errMs)
+				-- onlyOnBeat: swallow off-beat clicks so the note survives until a
+				-- real on-beat hit (or the auto-miss) — "click only on the rhythm"
+				if judgement == "miss" and props.onlyOnBeat then
+					return
+				end
+				resolve(judgement, errMs)
 			end,
 
 			create "UIScale" { Scale = pop },
