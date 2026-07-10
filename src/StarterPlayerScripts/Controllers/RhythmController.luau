@@ -6,11 +6,11 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
 
 local Packages = ReplicatedStorage.Packages
 local Vide = require(Packages.vide)
 local UI = require(ReplicatedStorage.Shared.UI.Common)
+local Tags = require(ReplicatedStorage.Shared.Framework.Tags)
 -- local Net = require(ReplicatedStorage.Shared.Framework.Net)
 
 local create = Vide.create
@@ -43,7 +43,6 @@ local RhythmController = {}
 
 -- session state (module-level, single local player)
 local gui: ScreenGui? = nil
-local prompt: ProximityPrompt? = nil
 local score = source(0)
 local combo = source(0)
 local playing = false
@@ -57,13 +56,10 @@ local function handleNoteResult(hit: boolean)
 		combo(0)
 	end
 
-	-- last note of the session resolved: re-arm the prompt so it can be played again
+	-- last note of the session resolved: free the session so a prompt can start it again
 	notesRemaining -= 1
 	if notesRemaining <= 0 then
 		playing = false
-		if prompt then
-			prompt.Enabled = true
-		end
 	end
 end
 
@@ -116,16 +112,13 @@ local function playChart(chart: { Note }, onResult: (hit: boolean) -> ())
 	end
 end
 
--- Plays the chart once. Ignored if a session is already running (the prompt is
--- disabled while playing, but this guards a double-trigger race too).
+-- Plays the chart once. Ignored while a session is already running, so a second
+-- prompt trigger mid-song does nothing.
 local function startSession()
 	if playing then
 		return
 	end
 	playing = true
-	if prompt then
-		prompt.Enabled = false
-	end
 	score(0)
 	combo(0)
 	notesRemaining = #DEMO_CHART
@@ -178,18 +171,21 @@ function RhythmController:Start()
 		}
 	end)
 
-	-- the station part + prompt are built on the server (RhythmStationService)
-	-- and replicated in; wait for them, then start a session on trigger
-	local station = Workspace:WaitForChild("RhythmStation")
-	local playPrompt = station:WaitForChild("PlayPrompt") :: ProximityPrompt
-	prompt = playPrompt
-
-	playPrompt.Triggered:Connect(function(player)
-		-- on the client Triggered only fires for our own interaction, but guard anyway
-		if player ~= Players.LocalPlayer then
-			return
+	-- any ProximityPrompt tagged "Prompt" (placed in Studio) starts a session on
+	-- trigger. Bind once — Tags wires up every current and future tagged prompt.
+	Tags.bind("Prompt", function(instance)
+		local proximityPrompt = instance :: ProximityPrompt
+		local conn = proximityPrompt.Triggered:Connect(function(player)
+			-- on the client Triggered only fires for our own interaction, but guard anyway
+			if player ~= Players.LocalPlayer then
+				return
+			end
+			startSession()
+		end)
+		-- disconnect if the prompt loses the tag or is destroyed
+		return function()
+			conn:Disconnect()
 		end
-		startSession()
 	end)
 
 	-- when a session ends, report the tally for the server to persist/validate:
