@@ -21,17 +21,17 @@ dos arquivos existentes em `src/ServerScriptService/Services/` e `src/StarterPla
 
 ## Comentários
 
-**Idioma: português brasileiro.** Comentários explicam **por quê** ou contexto
+**Idioma: inglês.** Comentários explicam **por quê** ou contexto
 não-óbvio. Sem comentários redundantes que só repetem o código.
 
 ```luau
--- Sincroniza leaderstats com o profile
+-- Syncs leaderstats with the profile
 local function syncLeaderstats(player, data)
     ...
 end
 
--- Pré-cria remotes no servidor para que o cliente não fique em WaitForChild infinito
--- esperando remotes "de saída" (que só seriam criados no primeiro FireClient).
+-- Pre-creates remotes on the server so the client never gets stuck in an
+-- infinite WaitForChild for "outbound" remotes (which would only be created on the first FireClient).
 function Net.Ensure(...)
 end
 ```
@@ -40,8 +40,8 @@ Header de arquivo é opcional, mas use pra módulos complexos:
 
 ```luau
 --!strict
--- Loja de machados (server). É a AUTORIDADE da compra: valida config, posse e
--- saldo antes de debitar coins e entregar o item. O cliente nunca decide nada.
+-- Axe shop (server). This is the AUTHORITY for purchases: validates config,
+-- ownership and balance before debiting coins and granting the item. The client never decides anything.
 ```
 
 Formato de TODO:
@@ -153,7 +153,7 @@ não precisa migrar em massa — só nos arquivos novos. StyLua decide ao format
 function MyService:Start()
     Players.PlayerAdded:Connect(handlePlayer)
 
-    -- Cobre players que já estavam no server antes do Start (recarga de script, etc)
+    -- Covers players who were already on the server before Start (script reload, etc)
     for _, player in Players:GetPlayers() do
         task.spawn(handlePlayer, player)
     end
@@ -202,7 +202,7 @@ player:SetAttribute("Coins", 150)
 -- client (qualquer Controller)
 local axe = player:GetAttribute("CurrentAxe")
 player:GetAttributeChangedSignal("Coins"):Connect(function()
-    -- atualiza UI reativamente
+    -- reactively updates the UI
 end)
 ```
 
@@ -217,7 +217,7 @@ end
 
 ## Anti-patterns
 
-- ❌ Comentários em inglês (o resto do projeto é PT-BR)
+- ❌ Comentários em português (código é sempre em inglês; o resto do projeto/docs é PT-BR)
 - ❌ `wait()` — use `task.wait()`
 - ❌ `Instance.new("RemoteEvent")` direto — sempre Net
 - ❌ Funções públicas de Service em PascalCase quando são helpers da API

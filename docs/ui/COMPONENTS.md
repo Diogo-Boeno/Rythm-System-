@@ -214,7 +214,7 @@ Componentes que devem existir (alguns já existem em `Shared/UI/`):
 - **Merchant**, **SellShop**, **Inventory** ✅ — telas de comércio
 - **Pop** ✅ — notification/toast
 - **CornerBrackets** — wrapper de modal com brackets nos cantos (a fazer)
-- **Button** — solid/outline variants padrão do design system (a fazer)
+- **Button** ✅ — estados idle/hover/press/disabled via Theme
 - **StatBar** — barra de progress genérica (durability, XP) (a fazer)
 - **SectionLabel** — `[ STORAGE ]` header de seção (a fazer)
 
