@@ -1,17 +1,14 @@
 --!strict
--- Client-side rhythm scoring. Each note is one HitCircle that lasts `duration`
--- seconds (the ring closes over that time); the beat is the instant it closes.
--- Scoring is binary and client-authoritative: HIT when the player clicks on the
--- beat, MISS when they never click (off-beat clicks are ignored, not punished).
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
 
 local Packages = ReplicatedStorage.Packages
 local Vide = require(Packages.vide)
 local UI = require(ReplicatedStorage.Shared.UI.Common)
 local Tags = require(ReplicatedStorage.Shared.Framework.Tags)
--- local Net = require(ReplicatedStorage.Shared.Framework.Net)
+
 
 local create = Vide.create
 local source = Vide.source
@@ -20,16 +17,23 @@ local root = Vide.root
 local HitCircle = UI.HitCircle
 local Theme = UI.Theme
 
--- points per hit; combo is just the running count of consecutive hits
 local HIT_POINTS = 100
--- forgiveness window around the beat, in seconds: a click inside this = HIT
-local HIT_WINDOW = 0.15
--- how long after the flash fades before the note instance is torn down
-local NOTE_CLEANUP_DELAY = 0.25
+
+local PERFECT_MS = 45
+local GREAT_MS = 95
+local GOOD_MS = 150
+
+local NOTE_CLEANUP_DELAY = 0.45
+
+local JUDGE_LABELS: { [UI.Judgement]: string } = {
+	perfect = "Sick",
+	great = "Good",
+	good = "Bad",
+	miss = "Miss",
+}
 
 type Note = { time: number, duration: number, position: UDim2 }
 
--- generated notes cycle these anchor points so consecutive beats don't stack up
 local CHART_POSITIONS: { UDim2 } = {
 	UDim2.fromScale(0.35, 0.45),
 	UDim2.fromScale(0.5, 0.55),
@@ -38,15 +42,11 @@ local CHART_POSITIONS: { UDim2 } = {
 	UDim2.fromScale(0.4, 0.55),
 	UDim2.fromScale(0.6, 0.5),
 }
--- approach ring closes over this many beats — ~1s at 120 BPM, matching the old hand-authored feel
 local CHART_APPROACH_BEATS = 2
--- default tempo/length a prompt trigger plays; the session ends when the last beat resolves
+
 local DEFAULT_BPM = 120
 local DEFAULT_DURATION = 30
 
--- Builds a chart of one note per beat spanning `durationSeconds`. `bpm` sets the beat
--- spacing (60/bpm), so the chart itself defines the playtime: it ends when the last
--- note resolves. e.g. buildChart(120, 30) -> 60 notes, one every 0.5s.
 local function buildChart(bpm: number, durationSeconds: number): { Note }
 	local beatInterval = 60 / bpm
 	local approachTime = beatInterval * CHART_APPROACH_BEATS
@@ -65,12 +65,22 @@ end
 
 local RhythmController = {}
 
--- session state (module-level, single local player)
+
 local gui: ScreenGui? = nil
 local score = source(0)
 local combo = source(0)
 local playing = false
 local notesRemaining = 0
+local activePrompt: ProximityPrompt? = nil
+
+local function endSession()
+	playing = false
+	workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
+	if activePrompt then
+		activePrompt.Enabled = true
+		activePrompt = nil
+	end
+end
 
 local function handleNoteResult(hit: boolean)
 	if hit then
@@ -80,24 +90,20 @@ local function handleNoteResult(hit: boolean)
 		combo(0)
 	end
 
-	-- last note of the session resolved: free the session so a prompt can start it again
 	notesRemaining -= 1
 	if notesRemaining <= 0 then
-		playing = false
+		endSession()
 	end
 end
 
--- Starts one note at `position` that lasts `duration` seconds. Calls `onResult`
--- exactly once with true (hit on the beat) or false (never hit) when it resolves.
+
 local function startNote(duration: number, position: UDim2, onResult: (hit: boolean) -> ())
 	local screen = gui
 	if not screen then
 		return
 	end
 
-	-- each note gets its own reactive scope so the HitCircle can register its
-	-- RenderStepped cleanup. create() does NOT destroy the instance on scope
-	-- teardown, so we Destroy it ourselves once the resolve flash has faded.
+
 	local destroyScope: (() -> ())?
 	local instance: Instance?
 	destroyScope, instance = root(function()
@@ -106,11 +112,11 @@ local function startNote(duration: number, position: UDim2, onResult: (hit: bool
 			position = position,
 			anchorPoint = Vector2.new(0.5, 0.5),
 			approachTime = duration,
-			-- one flat window collapses the graded judgement into hit-or-miss
-			perfectMs = HIT_WINDOW * 1000,
-			greatMs = HIT_WINDOW * 1000,
-			goodMs = HIT_WINDOW * 1000,
-			onlyOnBeat = true,
+			perfectMs = PERFECT_MS,
+			greatMs = GREAT_MS,
+			goodMs = GOOD_MS,
+			onlyOnBeat = false,
+			judgeLabels = JUDGE_LABELS,
 			onJudge = function(result)
 				onResult(result.judgement ~= "miss")
 				task.delay(NOTE_CLEANUP_DELAY, function()
@@ -136,15 +142,24 @@ local function playChart(chart: { Note }, onResult: (hit: boolean) -> ())
 	end
 end
 
--- Plays the chart once. Ignored while a session is already running, so a second
--- prompt trigger mid-song does nothing.
-local function startSession()
+local function startSession(prompt: ProximityPrompt, campart: BasePart?)
 	if playing then
 		return
 	end
 	playing = true
 	score(0)
 	combo(0)
+
+	activePrompt = prompt
+	prompt.Enabled = false
+
+	if campart then
+		local camera = workspace.CurrentCamera
+		camera.CameraType = Enum.CameraType.Scriptable
+		local info = TweenInfo.new(0.5, Enum.EasingStyle.Linear, Enum.EasingDirection.In)
+		TweenService:Create(camera, info, { CFrame = campart.CFrame }):Play()
+	end
+
 	local chart = buildChart(DEFAULT_BPM, DEFAULT_DURATION)
 	notesRemaining = #chart
 	playChart(chart, handleNoteResult)
@@ -161,7 +176,6 @@ function RhythmController:Start()
 	}
 	gui = screen
 
-	-- HUD mounted once; the labels read score/combo reactively
 	root(function()
 		create "TextLabel" {
 			Name = "Score",
@@ -196,16 +210,15 @@ function RhythmController:Start()
 		}
 	end)
 
-	-- any ProximityPrompt tagged "Prompt" (placed in Studio) starts a session on
-	-- trigger. Bind once — Tags wires up every current and future tagged prompt.
 	Tags.bind("Prompt", function(instance)
 		local proximityPrompt = instance :: ProximityPrompt
 		local conn = proximityPrompt.Triggered:Connect(function(player)
-			-- on the client Triggered only fires for our own interaction, but guard anyway
 			if player ~= Players.LocalPlayer then
 				return
 			end
-			startSession()
+
+			local campart = instance.Parent.Parent.Parent:FindFirstChild("CAMPART")
+			startSession(proximityPrompt, if campart and campart:IsA("BasePart") then campart else nil)
 		end)
 		-- disconnect if the prompt loses the tag or is destroyed
 		return function()
@@ -213,8 +226,7 @@ function RhythmController:Start()
 		end
 	end)
 
-	-- when a session ends, report the tally for the server to persist/validate:
-	-- Net.FireServer("SubmitScore", score())
+
 end
 
 return RhythmController

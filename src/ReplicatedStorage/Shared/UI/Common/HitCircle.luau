@@ -41,6 +41,8 @@ export type HitCircleProps = {
 	onlyOnBeat: boolean?,
 	-- optional key hint drawn inside the circle (e.g. "S", "F")
 	label: Reactive<string>?,
+	-- per-judgement popup words shown on resolve; falls back to neutral defaults
+	judgeLabels: { [Judgement]: string }?,
 	size: UDim2?,
 	position: UDim2?,
 	anchorPoint: Vector2?,
@@ -54,26 +56,46 @@ local DEFAULT_APPROACH = 1.2
 local DEFAULT_PERFECT_MS = 40
 local DEFAULT_GREAT_MS = 90
 local DEFAULT_GOOD_MS = 140
--- how long the resolve flash plays before freezing / re-arming
-local FEEDBACK_TIME = 0.18
+-- how long the resolve flash plays before freezing / re-arming. Also the read
+-- time for the judgement popup, so long enough to register the word.
+local FEEDBACK_TIME = 0.35
 -- gameplay ring reads better a touch thicker than the 1px technical UI stroke
 local RING_THICKNESS = 3
+-- on a hit the ring bursts outward from the circle as it fades — a "you nailed it" ripple
+local RING_RIPPLE_SCALE = 1.9
 
--- monochrome-plus-amber judgement mapping: amber is the reward, gray reads as
--- "dead" for a miss — stays inside the design system's restricted palette
+-- one distinct color per judgement so they never blur together: violet Sick,
+-- green Good, red Bad, dead-gray Miss. Sourced from the theme, never hardcoded here.
 local JUDGE_COLOR: { [Judgement]: Color3 } = {
-	perfect = Theme.color.accent,
-	great = Theme.color.accentDim,
-	good = Theme.color.textMuted,
-	miss = Theme.color.textFaint,
+	perfect = Theme.judge.perfect,
+	great = Theme.judge.great,
+	good = Theme.judge.good,
+	miss = Theme.judge.miss,
 }
 
--- pop the circle on resolve so a good hit feels punchy and a miss visibly deflates
+-- scale the circle punches to on resolve: the better the hit, the harder the pop
 local JUDGE_POP: { [Judgement]: number } = {
-	perfect = 1.22,
-	great = 1.16,
-	good = 1.1,
-	miss = 0.94,
+	perfect = 1.4,
+	great = 1.3,
+	good = 1.2,
+	miss = 1.0,
+}
+
+-- scale the circle eases to while the flash fades. Hits settle back to rest; a miss
+-- just deflates a touch and greys out — no weird implosion, it simply dies in place.
+local JUDGE_REST: { [Judgement]: number } = {
+	perfect = 1,
+	great = 1,
+	good = 1,
+	miss = 0.9,
+}
+
+-- neutral fallbacks; a game injects its own flavor (e.g. "Sick"/"Bad") via judgeLabels
+local DEFAULT_LABELS: { [Judgement]: string } = {
+	perfect = "Perfect",
+	great = "Great",
+	good = "Good",
+	miss = "Miss",
 }
 
 local function lerp(a: number, b: number, t: number): number
@@ -89,15 +111,19 @@ local function HitCircle(props: HitCircleProps)
 
 	-- reactive visual state
 	local resolved = source(false)
+	local missed = source(false) -- drives the red "die" path vs the hit "burst" path
 	local ringScale = source(START_SCALE)
 	local fade = source(0) -- 0 = fully visible, 1 = gone (feedback fade-out)
 	local pop = source(1)
 	local judgeColor = source(Theme.color.surfaceRaised)
+	local judgeText = source("") -- the popup word ("Sick", "Miss", ...), set on resolve
 
 	-- plain upvalues: the frame loop mutates these every step, they are not props
 	local clockStart = os.clock()
 	local resolveClock = 0
 	local popStart = 1
+	local popRest = 1 -- scale the pop eases to as the flash fades (implodes on a miss)
+	local ringAtResolve = 1 -- ring scale captured at resolve, so the burst starts from there
 
 	local function judgeFromError(errMs: number): Judgement
 		local a = math.abs(errMs)
@@ -116,8 +142,12 @@ local function HitCircle(props: HitCircleProps)
 			return
 		end
 		resolved(true)
+		missed(judgement == "miss")
 		judgeColor(JUDGE_COLOR[judgement])
+		judgeText((props.judgeLabels and props.judgeLabels[judgement]) or DEFAULT_LABELS[judgement])
 		popStart = JUDGE_POP[judgement]
+		popRest = JUDGE_REST[judgement]
+		ringAtResolve = ringScale()
 		pop(popStart)
 		resolveClock = os.clock()
 
@@ -129,10 +159,12 @@ local function HitCircle(props: HitCircleProps)
 	local function rearm()
 		clockStart = os.clock()
 		resolved(false)
+		missed(false)
 		ringScale(START_SCALE)
 		fade(0)
 		pop(1)
 		judgeColor(Theme.color.surfaceRaised)
+		judgeText("")
 	end
 
 	local conn: RBXScriptConnection? = nil
@@ -169,8 +201,15 @@ local function HitCircle(props: HitCircleProps)
 			end
 		else
 			fade(t)
-			-- ease the pop back toward rest as it fades
-			pop(lerp(popStart, 1, t))
+			-- ease-out so the scale snaps to its impact then settles, instead of a
+			-- mechanical linear crawl — this is most of what makes the hit feel alive
+			local eased = 1 - (1 - t) * (1 - t)
+			pop(lerp(popStart, popRest, eased))
+			-- a hit bursts the ring outward from where it resolved; a miss keeps it
+			-- hidden (nothing to celebrate)
+			if not missed() then
+				ringScale(lerp(ringAtResolve, RING_RIPPLE_SCALE, eased))
+			end
 		end
 	end)
 	-- disconnect if the mounting scope (the controller's root) tears down mid-note,
@@ -246,10 +285,51 @@ local function HitCircle(props: HitCircleProps)
 			create "UIAspectRatioConstraint" {},
 			create "UIStroke" {
 				Thickness = RING_THICKNESS,
-				Color = Theme.color.accent,
-				-- ring only exists during the approach; hidden the instant it resolves
+				-- neutral during the approach, but the burst takes the judgement color
+				-- so a Sick reads violet, a Bad reads red — the ripple sells the hit
+				Color = function()
+					return if resolved() then judgeColor() else Theme.color.accent
+				end,
+				-- solid during the approach; on a hit it fades as the ring bursts
+				-- outward, on a miss it just vanishes
 				Transparency = function()
-					return if resolved() then 1 else 0
+					if not resolved() then
+						return 0
+					end
+					return if missed() then 1 else fade()
+				end,
+			},
+		},
+
+		-- judgement word ("Sick"/"Bad"/...) that punches in over the circle and drifts
+		-- up as it fades. Only visible during the resolve flash; shares `pop` so it
+		-- rides the same punch as the target.
+		create "TextLabel" {
+			Name = "Judgement",
+			Active = false,
+			AnchorPoint = Vector2.new(0.5, 1),
+			Position = function()
+				-- start just above the circle and rise as the flash fades
+				return UDim2.new(0.5, 0, 0, math.round(-10 - 30 * fade()))
+			end,
+			Size = UDim2.fromScale(3, 0.6),
+			BackgroundTransparency = 1,
+			Text = judgeText,
+			TextColor3 = judgeColor,
+			TextTransparency = function()
+				return if resolved() then fade() else 1
+			end,
+			TextSize = Theme.textSize.xl,
+			FontFace = Theme.font.heading,
+			ZIndex = 4,
+
+			create "UIScale" { Scale = pop },
+			-- a matching stroke gives the word weight so it pops off the play area
+			create "UIStroke" {
+				Thickness = 2,
+				Color = Theme.color.background,
+				Transparency = function()
+					return if resolved() then fade() else 1
 				end,
 			},
 		},

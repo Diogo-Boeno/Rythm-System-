@@ -25,6 +25,20 @@ local Theme = {
 		-- engaged states (pressed, focused, checked).
 		accent = Color3.fromRGB(236, 236, 236),
 		accentDim = Color3.fromRGB(111, 111, 111),
+
+		-- the one hue break in the ramp: failure feedback only (a missed input,
+		-- a destructive action). Muted, not a saturated alarm red — never decoration.
+		danger = Color3.fromRGB(201, 61, 61),
+	},
+
+	-- gameplay judgement colors — the sanctioned exception to the monochrome palette,
+	-- because rhythm feedback has to read at a glance. Kept muted (not neon) so they
+	-- still sit in the AAA-indie tone rather than cartoon Roblox.
+	judge = {
+		perfect = Color3.fromRGB(163, 132, 236), -- Sick — violet
+		great = Color3.fromRGB(112, 196, 132), -- Good — muted emerald (never the banned #2ecc71)
+		good = Color3.fromRGB(201, 61, 61), -- Bad — the danger red
+		miss = Color3.fromRGB(128, 128, 136), -- Miss — dead gray
 	},
 
 	font = {
@@ -37,6 +51,8 @@ local Theme = {
 		sm = 13,
 		md = 15,
 		lg = 18,
+		-- display tier: punchy gameplay callouts (judgement popups), not body copy
+		xl = 34,
 	},
 
 	radius = {
@@ -58,6 +74,7 @@ local Theme = {
 export type Theme = typeof(Theme)
 
 table.freeze(Theme.color)
+table.freeze(Theme.judge)
 table.freeze(Theme.font)
 table.freeze(Theme.textSize)
 table.freeze(Theme.radius)
