@@ -1,9 +1,6 @@
 --!strict
--- osu!-style rhythm hit target: a fixed circle with an approach ring that closes
--- in over `approachTime`. The ring meets the circle exactly at the beat — the
--- player clicks then. Timing error against that beat is bucketed into a judgement.
--- Self-contained: it owns its own clock/loop so a chart controller can just spawn
--- one per note (autoReset = false) while a practice screen loops one (autoReset = true).
+-- osu!-style hit target: an approach ring closes onto a fixed circle over
+-- `approachTime`; the player clicks when they meet. Owns its own clock/loop.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -20,28 +17,24 @@ type Reactive<T> = T | () -> T
 export type Judgement = "perfect" | "great" | "good" | "miss"
 export type HitResult = {
 	judgement: Judgement,
-	-- signed timing error in ms: negative = early (clicked before the beat),
-	-- positive = late. Miss reports the error at the moment it expired.
+	-- signed ms error against the beat: negative = early, positive = late
 	errorMs: number,
 }
 
 export type HitCircleProps = {
-	-- fired exactly once per note when it resolves (hit or miss)
+	-- fired exactly once per note when it resolves
 	onJudge: ((HitResult) -> ())?,
-	-- seconds for the ring to travel from spawn scale down to the circle
 	approachTime: number?,
 	-- half-width of each judgement window, in ms around the beat
 	perfectMs: number?,
 	greatMs: number?,
 	goodMs: number?,
-	-- re-arm after the feedback flash instead of freezing (practice/demo loop)
+	-- re-arm after the flash instead of freezing (practice/demo loop)
 	autoReset: boolean?,
-	-- if true, a click outside the hit window is ignored (the note stays live)
-	-- instead of resolving as a miss — "only a click on the beat counts"
+	-- swallow off-beat clicks so the note survives until a real on-beat hit
 	onlyOnBeat: boolean?,
-	-- optional key hint drawn inside the circle (e.g. "S", "F")
 	label: Reactive<string>?,
-	-- per-judgement popup words shown on resolve; falls back to neutral defaults
+	-- per-judgement popup words; falls back to neutral defaults
 	judgeLabels: { [Judgement]: string }?,
 	size: UDim2?,
 	position: UDim2?,
@@ -50,22 +43,18 @@ export type HitCircleProps = {
 	parent: Instance?,
 }
 
--- Ring starts this many times the circle diameter and shrinks to 1x at the beat.
+-- ring starts this many circle-diameters out and shrinks to 1x at the beat
 local START_SCALE = 2.4
 local DEFAULT_APPROACH = 1.2
 local DEFAULT_PERFECT_MS = 40
 local DEFAULT_GREAT_MS = 90
 local DEFAULT_GOOD_MS = 140
--- how long the resolve flash plays before freezing / re-arming. Also the read
--- time for the judgement popup, so long enough to register the word.
+-- resolve-flash length; also the read time for the judgement popup
 local FEEDBACK_TIME = 0.35
--- gameplay ring reads better a touch thicker than the 1px technical UI stroke
 local RING_THICKNESS = 3
--- on a hit the ring bursts outward from the circle as it fades — a "you nailed it" ripple
+-- on a hit the ring bursts out to this scale as it fades
 local RING_RIPPLE_SCALE = 1.9
 
--- one distinct color per judgement so they never blur together: violet Sick,
--- green Good, red Bad, dead-gray Miss. Sourced from the theme, never hardcoded here.
 local JUDGE_COLOR: { [Judgement]: Color3 } = {
 	perfect = Theme.judge.perfect,
 	great = Theme.judge.great,
@@ -73,7 +62,7 @@ local JUDGE_COLOR: { [Judgement]: Color3 } = {
 	miss = Theme.judge.miss,
 }
 
--- scale the circle punches to on resolve: the better the hit, the harder the pop
+-- impact scale on resolve: the better the hit, the harder the pop
 local JUDGE_POP: { [Judgement]: number } = {
 	perfect = 1.4,
 	great = 1.3,
@@ -81,8 +70,7 @@ local JUDGE_POP: { [Judgement]: number } = {
 	miss = 1.0,
 }
 
--- scale the circle eases to while the flash fades. Hits settle back to rest; a miss
--- just deflates a touch and greys out — no weird implosion, it simply dies in place.
+-- scale the pop settles to as the flash fades; a miss just deflates in place
 local JUDGE_REST: { [Judgement]: number } = {
 	perfect = 1,
 	great = 1,
@@ -90,7 +78,6 @@ local JUDGE_REST: { [Judgement]: number } = {
 	miss = 0.9,
 }
 
--- neutral fallbacks; a game injects its own flavor (e.g. "Sick"/"Bad") via judgeLabels
 local DEFAULT_LABELS: { [Judgement]: string } = {
 	perfect = "Perfect",
 	great = "Great",
@@ -109,21 +96,20 @@ local function HitCircle(props: HitCircleProps)
 	local goodMs = props.goodMs or DEFAULT_GOOD_MS
 	local autoReset = props.autoReset == true
 
-	-- reactive visual state
 	local resolved = source(false)
-	local missed = source(false) -- drives the red "die" path vs the hit "burst" path
+	local missed = source(false)
 	local ringScale = source(START_SCALE)
-	local fade = source(0) -- 0 = fully visible, 1 = gone (feedback fade-out)
+	local fade = source(0) -- 0 = visible, 1 = gone
 	local pop = source(1)
 	local judgeColor = source(Theme.color.surfaceRaised)
-	local judgeText = source("") -- the popup word ("Sick", "Miss", ...), set on resolve
+	local judgeText = source("")
 
-	-- plain upvalues: the frame loop mutates these every step, they are not props
+	-- mutated by the frame loop every step; not reactive
 	local clockStart = os.clock()
 	local resolveClock = 0
 	local popStart = 1
-	local popRest = 1 -- scale the pop eases to as the flash fades (implodes on a miss)
-	local ringAtResolve = 1 -- ring scale captured at resolve, so the burst starts from there
+	local popRest = 1
+	local ringAtResolve = 1 -- ring scale at resolve, so the burst starts from there
 
 	local function judgeFromError(errMs: number): Judgement
 		local a = math.abs(errMs)
@@ -180,11 +166,10 @@ local function HitCircle(props: HitCircleProps)
 
 		if not resolved() then
 			local elapsed = now - clockStart
-			-- clamp so the ring locks onto the circle during the late window
-			-- instead of collapsing past it
+			-- clamp so the ring locks onto the circle instead of collapsing past it
 			ringScale(lerp(START_SCALE, 1, math.clamp(elapsed / approachTime, 0, 1)))
 
-			-- ring sailed past the circle beyond the late-good window: auto-miss
+			-- ring sailed past the late-good window: auto-miss
 			if elapsed > approachTime + goodMs / 1000 then
 				resolve("miss", (elapsed - approachTime) * 1000)
 			end
@@ -201,19 +186,15 @@ local function HitCircle(props: HitCircleProps)
 			end
 		else
 			fade(t)
-			-- ease-out so the scale snaps to its impact then settles, instead of a
-			-- mechanical linear crawl — this is most of what makes the hit feel alive
+			-- ease-out so the scale snaps then settles instead of a linear crawl
 			local eased = 1 - (1 - t) * (1 - t)
 			pop(lerp(popStart, popRest, eased))
-			-- a hit bursts the ring outward from where it resolved; a miss keeps it
-			-- hidden (nothing to celebrate)
 			if not missed() then
 				ringScale(lerp(ringAtResolve, RING_RIPPLE_SCALE, eased))
 			end
 		end
 	end)
-	-- disconnect if the mounting scope (the controller's root) tears down mid-note,
-	-- otherwise the RenderStepped connection leaks past the circle's lifetime
+	-- drop the loop if the mounting scope tears down mid-note, or it leaks
 	cleanup(stop)
 
 	return create "Frame" {
@@ -225,8 +206,7 @@ local function HitCircle(props: HitCircleProps)
 		BackgroundTransparency = 1,
 		Parent = props.parent,
 
-		-- the fixed target. Clickable throughout the approach so an early press
-		-- still resolves the note (and misses) — matches osu! click semantics.
+		-- clickable throughout the approach so an early press still resolves (osu semantics)
 		create "TextButton" {
 			Name = "Target",
 			Size = UDim2.fromScale(1, 1),
@@ -248,8 +228,6 @@ local function HitCircle(props: HitCircleProps)
 				end
 				local errMs = (os.clock() - clockStart - approachTime) * 1000
 				local judgement = judgeFromError(errMs)
-				-- onlyOnBeat: swallow off-beat clicks so the note survives until a
-				-- real on-beat hit (or the auto-miss) — "click only on the rhythm"
 				if judgement == "miss" and props.onlyOnBeat then
 					return
 				end
@@ -268,8 +246,7 @@ local function HitCircle(props: HitCircleProps)
 			},
 		},
 
-		-- the approach ring. Active=false so its (transparent) body never sinks
-		-- clicks meant for the target underneath it.
+		-- Active=false so the ring's transparent body never sinks clicks meant for the target
 		create "Frame" {
 			Name = "ApproachRing",
 			Active = false,
@@ -285,13 +262,10 @@ local function HitCircle(props: HitCircleProps)
 			create "UIAspectRatioConstraint" {},
 			create "UIStroke" {
 				Thickness = RING_THICKNESS,
-				-- neutral during the approach, but the burst takes the judgement color
-				-- so a Sick reads violet, a Bad reads red — the ripple sells the hit
+				-- burst takes the judgement color so a Sick reads violet, a Bad red
 				Color = function()
 					return if resolved() then judgeColor() else Theme.color.accent
 				end,
-				-- solid during the approach; on a hit it fades as the ring bursts
-				-- outward, on a miss it just vanishes
 				Transparency = function()
 					if not resolved() then
 						return 0
@@ -301,15 +275,12 @@ local function HitCircle(props: HitCircleProps)
 			},
 		},
 
-		-- judgement word ("Sick"/"Bad"/...) that punches in over the circle and drifts
-		-- up as it fades. Only visible during the resolve flash; shares `pop` so it
-		-- rides the same punch as the target.
+		-- judgement word: punches in over the circle, rises and fades on resolve
 		create "TextLabel" {
 			Name = "Judgement",
 			Active = false,
 			AnchorPoint = Vector2.new(0.5, 1),
 			Position = function()
-				-- start just above the circle and rise as the flash fades
 				return UDim2.new(0.5, 0, 0, math.round(-10 - 30 * fade()))
 			end,
 			Size = UDim2.fromScale(3, 0.6),
@@ -324,7 +295,6 @@ local function HitCircle(props: HitCircleProps)
 			ZIndex = 4,
 
 			create "UIScale" { Scale = pop },
-			-- a matching stroke gives the word weight so it pops off the play area
 			create "UIStroke" {
 				Thickness = 2,
 				Color = Theme.color.background,
