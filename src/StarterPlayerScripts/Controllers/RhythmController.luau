@@ -29,15 +29,39 @@ local NOTE_CLEANUP_DELAY = 0.25
 
 type Note = { time: number, duration: number, position: UDim2 }
 
--- demo chart: `time` is when the beat lands (seconds from session start),
--- `duration` is how long that note's ring takes to close in.
-local DEMO_CHART: { Note } = {
-	{ time = 2.0, duration = 1.2, position = UDim2.fromScale(0.35, 0.45) },
-	{ time = 3.0, duration = 1.2, position = UDim2.fromScale(0.5, 0.55) },
-	{ time = 4.0, duration = 1.0, position = UDim2.fromScale(0.65, 0.45) },
-	{ time = 4.6, duration = 1.0, position = UDim2.fromScale(0.5, 0.4) },
-	{ time = 5.2, duration = 0.8, position = UDim2.fromScale(0.4, 0.55) },
+-- generated notes cycle these anchor points so consecutive beats don't stack up
+local CHART_POSITIONS: { UDim2 } = {
+	UDim2.fromScale(0.35, 0.45),
+	UDim2.fromScale(0.5, 0.55),
+	UDim2.fromScale(0.65, 0.45),
+	UDim2.fromScale(0.5, 0.4),
+	UDim2.fromScale(0.4, 0.55),
+	UDim2.fromScale(0.6, 0.5),
 }
+-- approach ring closes over this many beats — ~1s at 120 BPM, matching the old hand-authored feel
+local CHART_APPROACH_BEATS = 2
+-- default tempo/length a prompt trigger plays; the session ends when the last beat resolves
+local DEFAULT_BPM = 120
+local DEFAULT_DURATION = 30
+
+-- Builds a chart of one note per beat spanning `durationSeconds`. `bpm` sets the beat
+-- spacing (60/bpm), so the chart itself defines the playtime: it ends when the last
+-- note resolves. e.g. buildChart(120, 30) -> 60 notes, one every 0.5s.
+local function buildChart(bpm: number, durationSeconds: number): { Note }
+	local beatInterval = 60 / bpm
+	local approachTime = beatInterval * CHART_APPROACH_BEATS
+	local chart: { Note } = {}
+	local beat = 1
+	while beat * beatInterval <= durationSeconds do
+		table.insert(chart, {
+			time = beat * beatInterval,
+			duration = approachTime,
+			position = CHART_POSITIONS[(beat - 1) % #CHART_POSITIONS + 1],
+		})
+		beat += 1
+	end
+	return chart
+end
 
 local RhythmController = {}
 
@@ -121,8 +145,9 @@ local function startSession()
 	playing = true
 	score(0)
 	combo(0)
-	notesRemaining = #DEMO_CHART
-	playChart(DEMO_CHART, handleNoteResult)
+	local chart = buildChart(DEFAULT_BPM, DEFAULT_DURATION)
+	notesRemaining = #chart
+	playChart(chart, handleNoteResult)
 end
 
 function RhythmController:Start()
